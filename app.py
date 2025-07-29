@@ -1,66 +1,64 @@
 import streamlit as st
-import os
-import fitz  # PyMuPDF
-from collections import Counter
-from google.colab import files
+import PyPDF2
+import numpy as np
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
-# Step 1: Upload Resume
-uploaded = files.upload()
-
-# Step 2: Load and extract PDF text
-def extract_text_from_pdf(pdf_path):
-    doc = fitz.open(pdf_path)
+# Function to extract text from PDFs
+def extract_text_from_pdf(uploaded_file):
     text = ""
-    for page in doc:
-        text += page.get_text()
-    doc.close()
+    reader = PyPDF2.PdfReader(uploaded_file)
+    for page in reader.pages:
+        text += page.extract_text() if page.extract_text() else ""
     return text
 
-# Step 3: Preprocess text (basic)
+# Function to preprocess text (basic cleanup)
 def preprocess_text(text):
-    return text.lower().replace('\n', ' ').replace('\r', ' ').strip()
+    return text.lower().strip()
 
-# Step 4: Define Job Description Keywords
-job_description = """
-We are looking for a Machine Learning Engineer with experience in Python, data analysis, 
-TensorFlow or PyTorch, and experience working with large language models (LLMs).
-Knowledge of NLP, Scikit-learn, SQL, cloud platforms (AWS or GCP), and Git is a plus.
-"""
+# Streamlit UI
+st.title("Akshay Bhujbal's AI Resume Screener")
+st.subheader("Upload Resumes & Get AI Rankings")
 
-job_keywords = [
-    "machine learning", "python", "data analysis", "tensorflow", "pytorch",
-    "llm", "nlp", "scikit-learn", "sql", "aws", "gcp", "git"
-]
+st.write(
+    "Most resume checkers allow only a few uploads per day or charge fees. "
+    "This tool is completely free and unlimited. Upload your resumes and see the rankings instantly."
+)
 
-# Step 5: Score Resume against keywords
-def score_resume(resume_text, keywords):
-    score = 0
-    found = []
-    missing = []
+# Upload resumes
+uploaded_files = st.file_uploader("Upload resumes (PDF only)", accept_multiple_files=True, type=["pdf"])
+job_desc = st.text_area("Paste the Job Description here")
 
-    for keyword in keywords:
-        if keyword in resume_text:
-            found.append(keyword)
-            score += 1
-        else:
-            missing.append(keyword)
-    
-    return {
-        "score": score,
-        "total": len(keywords),
-        "percentage": round((score / len(keywords)) * 100, 2),
-        "found_keywords": found,
-        "missing_keywords": missing
-    }
+if st.button("Rank Resumes"):
+    if not uploaded_files:
+        st.warning("Please upload at least one resume.")
+    elif not job_desc.strip():
+        st.warning("Please enter a job description.")
+    else:
+        resume_scores = {}
 
-# Step 6: Run ATS Checker
-for file_name in uploaded.keys():
-    resume_raw = extract_text_from_pdf(file_name)
-    resume_clean = preprocess_text(resume_raw)
-    results = score_resume(resume_clean, job_keywords)
+        # Initialize TF-IDF Vectorizer
+        vectorizer = TfidfVectorizer()
 
-    # Step 7: Print Report
-    print(f"\n--- ATS Resume Check for: {file_name} ---")
-    print(f"Score: {results['score']} / {results['total']} ({results['percentage']}%)")
-    print(f"✅ Found Keywords: {', '.join(results['found_keywords'])}")
-    print(f"❌ Missing Keywords: {', '.join(results['missing_keywords'])}")
+        # Process resumes
+        for uploaded_file in uploaded_files:
+            resume_text = extract_text_from_pdf(uploaded_file)
+            clean_resume_text = preprocess_text(resume_text)
+
+            # Fit vectorizer on job description and resume
+            documents = [job_desc, clean_resume_text]
+            vectors = vectorizer.fit_transform(documents)
+
+            # Compute similarity
+            similarity_score = cosine_similarity(vectors)[0][1]
+            resume_scores[uploaded_file.name] = similarity_score
+
+        # Sort resumes by match score
+        sorted_resumes = sorted(resume_scores.items(), key=lambda x: x[1], reverse=True)
+
+        # Display results
+        st.subheader("Ranked Resumes")
+        for resume, score in sorted_resumes:
+            st.write(f"{resume}: {score:.2%} match")
+
+        st.success("Ranking Complete!")
